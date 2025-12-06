@@ -118,9 +118,14 @@
         const $ = id => document.getElementById(id);
         const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent";
         const CORS_PROXY = "https://corsproxy.io/?";
+        const WORD_FREQ_URL = "https://norvig.com/ngrams/count_1w.txt";
 
         // Define a hard timeout for the Gemini API call (20 seconds)
-        const GEMINI_TIMEOUT_MS = 20000; 
+        const GEMINI_TIMEOUT_MS = 20000;
+
+        // Word frequency cache
+        const WORD_FREQ = {};
+        let WORD_FREQ_LOADED = false; 
 
         /**
          * Core logic to handle the Gemini API call with exponential backoff and a hard timeout.
@@ -182,6 +187,138 @@
                     delay *= 2; 
                 }
             }
+        }
+
+
+        /**
+         * IndexedDB helper functions for word frequency caching
+         */
+        const DB_NAME = 'WordleValidatorDB';
+        const DB_VERSION = 1;
+        const STORE_NAME = 'wordFrequencies';
+
+        function openDatabase() {
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open(DB_NAME, DB_VERSION);
+
+                request.onerror = () => reject(request.error);
+                request.onsuccess = () => resolve(request.result);
+
+                request.onupgradeneeded = (event) => {
+                    const db = event.target.result;
+                    if (!db.objectStoreNames.contains(STORE_NAME)) {
+                        db.createObjectStore(STORE_NAME);
+                    }
+                };
+            });
+        }
+
+        async function getCachedWordFrequencies() {
+            try {
+                const db = await openDatabase();
+                return new Promise((resolve, reject) => {
+                    const transaction = db.transaction(STORE_NAME, 'readonly');
+                    const store = transaction.objectStore(STORE_NAME);
+                    const request = store.get('frequencies');
+
+                    request.onsuccess = () => resolve(request.result);
+                    request.onerror = () => reject(request.error);
+                });
+            } catch (e) {
+                console.error('Error reading from IndexedDB:', e);
+                return null;
+            }
+        }
+
+        async function setCachedWordFrequencies(data) {
+            try {
+                const db = await openDatabase();
+                return new Promise((resolve, reject) => {
+                    const transaction = db.transaction(STORE_NAME, 'readwrite');
+                    const store = transaction.objectStore(STORE_NAME);
+                    const request = store.put(data, 'frequencies');
+
+                    request.onsuccess = () => resolve();
+                    request.onerror = () => reject(request.error);
+                });
+            } catch (e) {
+                console.error('Error writing to IndexedDB:', e);
+            }
+        }
+
+        /**
+         * Load word frequencies from Peter Norvig's dataset
+         */
+        async function loadWordFrequencies() {
+            console.log('Loading word frequencies from', WORD_FREQ_URL);
+            try {
+                // Use CORS proxy (direct fetch is blocked by CORS)
+                const response = await fetch(CORS_PROXY + WORD_FREQ_URL);
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const text = await response.text();
+                const lines = text.split('\n');
+
+                for (const line of lines) {
+                    const parts = line.split('\t');
+                    if (parts.length >= 2) {
+                        const word = parts[0].trim().toUpperCase();
+                        const count = parseInt(parts[1].trim());
+                        if (word && !isNaN(count)) {
+                            WORD_FREQ[word] = count;
+                        }
+                    }
+                }
+
+                console.log(`Loaded ${Object.keys(WORD_FREQ).length} word frequencies`);
+            } catch (error) {
+                console.error('Error loading word frequencies:', error);
+                // Continue without word frequency data
+            }
+        }
+
+        /**
+         * Ensure word frequencies are loaded (with IndexedDB caching)
+         */
+        async function ensureWordFrequenciesLoaded() {
+            if (WORD_FREQ_LOADED) return;
+
+            // Check IndexedDB cache first
+            const cached = await getCachedWordFrequencies();
+            const ONE_WEEK = 7 * 24 * 60 * 60 * 1000;
+
+            if (cached && cached.data && cached.timestamp &&
+                (Date.now() - cached.timestamp) < ONE_WEEK) {
+                // Use cached data
+                Object.assign(WORD_FREQ, cached.data);
+                console.log(`Loaded ${Object.keys(WORD_FREQ).length} word frequencies from IndexedDB cache`);
+            } else {
+                // Fetch fresh data
+                await loadWordFrequencies();
+
+                // Cache in IndexedDB
+                try {
+                    await setCachedWordFrequencies({
+                        data: WORD_FREQ,
+                        timestamp: Date.now()
+                    });
+                    console.log('Cached word frequencies in IndexedDB');
+                } catch (e) {
+                    console.warn('Could not cache word frequencies in IndexedDB:', e);
+                }
+            }
+
+            WORD_FREQ_LOADED = true;
+        }
+
+        /**
+         * Get word frequency score (returns 0 if not found)
+         */
+        function getWordFrequency(word) {
+            return WORD_FREQ[word.toUpperCase()] || 0;
         }
 
 
@@ -387,22 +524,40 @@ Example output:
                         $('validationStatus').textContent = 'Filtering words based on all constraints...';
                         const candidateWords = allWords.filter(word => checkDeterministicRules(word, rules));
 
+                        // Load word frequencies and sort by commonness
+                        $('validationStatus').textContent = 'Loading word frequencies and sorting...';
+                        await ensureWordFrequenciesLoaded();
+
+                        console.log('Sorting words by frequency...');
+                        const sortedWords = candidateWords.sort((a, b) => {
+                            const freqA = getWordFrequency(a);
+                            const freqB = getWordFrequency(b);
+                            console.log(`${a}: ${freqA}, ${b}: ${freqB}`);
+                            return freqB - freqA; // Higher frequency first (more common)
+                        });
+                        console.log('Sorted words:', sortedWords);
+
                         // Display the candidate words
-                        $('wordListInput').value = candidateWords.join('\n');
-                        $('wordListCount').textContent = `(${candidateWords.length} words found)`;
+                        $('wordListInput').value = sortedWords.join('\n');
+                        $('wordListCount').textContent = `(${sortedWords.length} words found)`;
                         $('validationStatus').className = 'validation-status bg-green-200 text-green-800 ml-2';
-                        $('validationStatus').textContent = `Found ${candidateWords.length} valid Scrabble words!`;
+                        $('validationStatus').textContent = `Found ${sortedWords.length} valid Scrabble words (sorted by commonness)!`;
 
                         // Display results
                         const resultsDiv = $('results');
                         resultsDiv.innerHTML = '';
-                        candidateWords.forEach(word => {
+                        sortedWords.forEach(word => {
+                            const freq = getWordFrequency(word);
                             const wordElement = document.createElement('div');
                             wordElement.className = 'text-lg font-mono p-2 bg-white border border-green-300 rounded-lg hover:bg-green-50 cursor-pointer';
                             wordElement.textContent = word;
+                            // Add frequency as tooltip
+                            if (freq > 0) {
+                                wordElement.title = `Frequency: ${freq.toLocaleString()}`;
+                            }
                             resultsDiv.appendChild(wordElement);
                         });
-                        $('resultCount').textContent = candidateWords.length;
+                        $('resultCount').textContent = sortedWords.length;
                     }
                 } else {
                     $('ruleInput').value = "Error: Could not generate DSL. Check console for details.";

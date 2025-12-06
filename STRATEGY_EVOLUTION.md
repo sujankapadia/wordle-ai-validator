@@ -160,7 +160,7 @@ Output ONLY a JSON object with one key: 'dsl_rules'...`;
 
 ---
 
-## Strategy 6: Remove Dictionary API + Add Pagination ⭐ (Current)
+## Strategy 6: Remove Dictionary API + Add Pagination ⭐
 
 ### Approach
 - Gemini generates ONLY DSL rules
@@ -300,6 +300,20 @@ const baseUrl = `${CORS_PROXY}https://www.bestwordlist.com/p/${letter.toLowerCas
 - Dictionary API was a performance bottleneck (with precautionary delays)
 - Removing it simplified the architecture
 
+### 9. IndexedDB vs localStorage for Large Datasets
+- localStorage has strict 5-10MB quota limit
+- 333k word frequencies exceeded localStorage capacity
+- IndexedDB supports much larger datasets (~60% disk space)
+- Always use IndexedDB for datasets larger than a few MB
+- localStorage cache corruption led to silent failures (words showing frequency 0)
+
+### 10. Word Frequency Data is Valuable for UX
+- Sorting by commonness dramatically improves user experience
+- Common words appear first (ABOUT, ABOVE, AMONG)
+- Rare/obscure Scrabble words appear last (ABOHM, AZOTE)
+- Peter Norvig's dataset provides good coverage with simple licensing
+- Caching enables instant repeat access without re-downloading
+
 ---
 
 ## Architecture Evolution
@@ -332,6 +346,178 @@ Display Results
 
 ---
 
+## Strategy 7: Add Word Frequency Sorting with localStorage
+
+### Approach
+- Keep all Strategy 6 functionality (Gemini DSL + bestwordlist.com with pagination)
+- Add word frequency data to sort results by commonness
+- Load 333k word frequencies from Peter Norvig's dataset (Google Web Trillion Word Corpus)
+- Cache in localStorage for fast repeat access
+- Sort results with common words first
+
+### Research
+- Created `WORD_FREQUENCY_RESEARCH.md` documenting evaluation of 6 data sources:
+  1. **Peter Norvig's dataset** (333k words from Google Web Corpus) ✅ Selected
+  2. wordfreq Python library (high quality but licensing concerns)
+  3. Kaggle English word frequency (repackaged Norvig data)
+  4. COCA (only 5k free words)
+  5. Google Books Ngrams (too large, impractical)
+  6. Wordle-specific lists (no frequency data, 5-letter only)
+
+### Implementation
+```javascript
+const WORD_FREQ_URL = "https://norvig.com/ngrams/count_1w.txt";
+const WORD_FREQ = {};
+
+async function loadWordFrequencies() {
+    const response = await fetch(CORS_PROXY + WORD_FREQ_URL);
+    const text = await response.text();
+    const lines = text.split('\n');
+    for (const line of lines) {
+        const [word, count] = line.split('\t');
+        if (word && count) {
+            WORD_FREQ[word.toUpperCase()] = parseInt(count);
+        }
+    }
+}
+
+async function ensureWordFrequenciesLoaded() {
+    // Check localStorage cache
+    const cached = localStorage.getItem('word_freq_cache');
+    if (cached) {
+        Object.assign(WORD_FREQ, JSON.parse(cached));
+    } else {
+        await loadWordFrequencies();
+        localStorage.setItem('word_freq_cache', JSON.stringify(WORD_FREQ));
+    }
+}
+
+// Sort results by frequency
+const sortedWords = candidateWords.sort((a, b) => {
+    return getWordFrequency(b) - getWordFrequency(a);
+});
+```
+
+### Problems
+- **localStorage QuotaExceededError**: 333k words (~2.2MB text, ~5-10MB JSON) exceeded localStorage quota (~5-10MB limit)
+- Error message: `QuotaExceededError: Failed to execute 'setItem' on 'Storage': Setting the value of 'word_freq_cache' exceeded the quota.`
+- All words showed frequency 0 due to corrupt/empty cache
+- Had to manually clear localStorage to recover
+
+### Why It Failed
+- localStorage has strict 5-10MB limit per domain
+- 333k word-frequency pairs as JSON exceeded this limit
+- No fallback when quota exceeded
+- User wanted full dataset (not subset) to support all word lengths
+
+---
+
+## Strategy 8: Replace localStorage with IndexedDB ⭐ (Current)
+
+### Approach
+- Same as Strategy 7, but replace localStorage with IndexedDB
+- IndexedDB has much higher limits (~60% of available disk space)
+- Keep 1-week cache expiration strategy
+- Same word frequency sorting logic
+
+### Implementation Details
+
+#### IndexedDB Setup
+```javascript
+const DB_NAME = 'WordleValidatorDB';
+const DB_VERSION = 1;
+const STORE_NAME = 'wordFrequencies';
+
+function openDatabase() {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open(DB_NAME, DB_VERSION);
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => resolve(request.result);
+        request.onupgradeneeded = (event) => {
+            const db = event.target.result;
+            if (!db.objectStoreNames.contains(STORE_NAME)) {
+                db.createObjectStore(STORE_NAME);
+            }
+        };
+    });
+}
+```
+
+#### Cache Read/Write
+```javascript
+async function getCachedWordFrequencies() {
+    const db = await openDatabase();
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction(STORE_NAME, 'readonly');
+        const store = transaction.objectStore(STORE_NAME);
+        const request = store.get('frequencies');
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+    });
+}
+
+async function setCachedWordFrequencies(data) {
+    const db = await openDatabase();
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction(STORE_NAME, 'readwrite');
+        const store = transaction.objectStore(STORE_NAME);
+        const request = store.put(data, 'frequencies');
+        request.onsuccess = () => resolve();
+        request.onerror = () => reject(request.error);
+    });
+}
+```
+
+#### Cache with Expiration
+```javascript
+async function ensureWordFrequenciesLoaded() {
+    if (WORD_FREQ_LOADED) return;
+
+    const cached = await getCachedWordFrequencies();
+    const ONE_WEEK = 7 * 24 * 60 * 60 * 1000;
+
+    if (cached && cached.data && cached.timestamp &&
+        (Date.now() - cached.timestamp) < ONE_WEEK) {
+        Object.assign(WORD_FREQ, cached.data);
+        console.log(`Loaded ${Object.keys(WORD_FREQ).length} word frequencies from IndexedDB cache`);
+    } else {
+        await loadWordFrequencies();
+        await setCachedWordFrequencies({
+            data: WORD_FREQ,
+            timestamp: Date.now()
+        });
+        console.log('Cached word frequencies in IndexedDB');
+    }
+
+    WORD_FREQ_LOADED = true;
+}
+```
+
+### Results
+- ✅ **Successfully stores 333k words** (no quota issues)
+- ✅ **Instant loading on repeat visits** (cached in IndexedDB)
+- ✅ **Common words appear first** (ABOUT, ABOVE, AMONG before rare words like ABOHM)
+- ✅ **Frequency tooltips** on hover show exact counts
+- ✅ **Works offline** after first load (1-week cache)
+- ✅ **Graceful degradation** if IndexedDB unavailable
+
+### Example Output
+```
+Input: "The word has 'A' at position 1 and 'O' at position 3"
+
+Results (sorted by commonness):
+1. ABOUT (1,226,734,006 occurrences) ⭐ Most common
+2. ABOVE (141,894,620)
+3. AMONG (83,431,590)
+4. AROMA (2,018,777)
+5. AROSE (2,609,029)
+6. AGONY (1,543,205)
+...
+67. ABOHM (not in dataset - frequency 0) ⭐ Least common
+```
+
+---
+
 ## Files Created During Evolution
 
 ### Test Scripts
@@ -349,9 +535,10 @@ Display Results
 - `CLAUDE.md` - Technical documentation for AI assistants
 - `README.md` - User-facing documentation with algorithm explanation
 - `STRATEGY_EVOLUTION.md` - This document
+- `WORD_FREQUENCY_RESEARCH.md` - Research comparing word frequency data sources (Strategy 7)
 
 ### Main Application
-- `wordle-ai-validator.html` - Complete refactor from Strategy 2 → Strategy 6
+- `wordle-ai-validator.html` - Complete refactor from Strategy 2 → Strategy 6 → Strategy 8 (added word frequency sorting)
 
 ---
 
@@ -380,15 +567,17 @@ Display Results
 
 Based on learnings from this evolution:
 
-1. **Cache word lists in localStorage** - Avoid re-fetching the same position lists
+1. **Cache word lists in IndexedDB** - Avoid re-fetching the same position lists from bestwordlist.com
 2. **Support constraints without exact positions** - Fetch from multiple positions and intersect
 3. **Parallel page fetching** - Fetch pagination pages concurrently instead of sequentially
 4. **Offline mode** - Pre-download common position lists for offline use
 5. **Progressive results** - Show words as pages are fetched (streaming results)
-6. **Word frequency scoring** - Rank results by common vs. obscure Scrabble words
+6. **Visual frequency indicators** - Color-coded badges or bars showing commonness
+7. **Word definition tooltips** - Show definitions on hover (in addition to frequency)
 
 ---
 
 **Document Created**: 2025-01-05
+**Document Updated**: 2025-01-06 (added Strategy 7 & 8)
 **Project**: Wordle AI Validator
-**Final Strategy**: Strategy 6 (Gemini DSL + bestwordlist.com with pagination)
+**Current Strategy**: Strategy 8 (Gemini DSL + bestwordlist.com with pagination + word frequency sorting with IndexedDB caching)

@@ -9,6 +9,7 @@ AI-assisted word finder for Wordle puzzles using real Scrabble word dictionaries
 - **Domain-Specific Language (DSL)**: Supports exact matches (green), present letters (yellow), and absent letters (gray)
 - **Real Word Dictionary**: Fetches valid Scrabble words from bestwordlist.com with full pagination support
 - **Fast Filtering**: Deterministic client-side filtering based on your constraints
+- **Word Frequency Sorting**: Results sorted by commonness using 333k+ word frequency data
 - **Clean UI**: Built with Tailwind CSS for a modern, responsive interface
 
 ## Quick Start
@@ -36,6 +37,10 @@ Natural Language Input
     (using first exact position constraint + pagination)
         ↓
     Filter Locally (check all constraints)
+        ↓
+    Load Word Frequencies (cached in IndexedDB)
+        ↓
+    Sort by Commonness (most frequent first)
         ↓
     Display Results
 ```
@@ -67,10 +72,17 @@ Natural Language Input
      - Word length
    - This happens entirely client-side for speed
 
-5. **Display Results**
-   - Shows all words that pass all filters
+5. **Word Frequency Loading & Sorting**
+   - Loads 333k word frequency dataset from Peter Norvig's corpus (Google Web Trillion Word Corpus)
+   - Caches in IndexedDB for instant access on subsequent loads (1-week cache)
+   - Sorts results by frequency (most common words first)
+   - Example: "AMONG" (83M occurrences) appears before "AGONY" (1.5M) and "POOKA" (49K)
+
+6. **Display Results**
+   - Shows all words that pass all filters, sorted by commonness
    - Words are guaranteed to be valid Scrabble words (from bestwordlist.com)
-   - No additional dictionary validation needed
+   - Hover over words to see frequency count tooltip
+   - Common words appear first for better Wordle gameplay
 
 ### Why This Approach is Fast
 
@@ -79,6 +91,7 @@ Natural Language Input
 - **Smart fetching**: Only fetches words matching one exact position, then filters locally
 - **Pagination awareness**: Gets the complete word list, not just the first page
 - **Client-side filtering**: All constraint checking happens in the browser
+- **IndexedDB caching**: Word frequencies cached locally (instant on repeat visits)
 
 ## How to Use
 
@@ -107,7 +120,7 @@ Words are automatically fetched from bestwordlist.com and filtered. The textarea
 
 ### Step 4: Results
 
-View all words that match your constraints. These are guaranteed to be valid Scrabble words.
+View all words that match your constraints, **sorted by commonness** (most frequent words first). Words are guaranteed to be valid Scrabble words. Hover over any word to see its frequency count.
 
 ## DSL Syntax
 
@@ -160,17 +173,22 @@ The API is only used to translate natural language into the DSL format. Rate lim
 - **Vanilla JavaScript**: Logic and API integration
 - **Google Gemini API**: Natural language → DSL translation
 - **bestwordlist.com**: Source of valid Scrabble words
-- **corsproxy.io**: CORS proxy for accessing bestwordlist.com
+- **Peter Norvig's word frequency data**: 333k+ words from Google Web Trillion Word Corpus
+- **IndexedDB**: Client-side database for caching word frequencies
+- **corsproxy.io**: CORS proxy for accessing external resources
 
 ### Key Functions
 
-- `generateDslAndFetchWords()`: Main orchestrator - calls Gemini, fetches words, filters, and displays results
+- `generateDslAndFetchWords()`: Main orchestrator - calls Gemini, fetches words, filters, sorts, and displays results
 - `handleGeminiApiCall()`: Gemini API call with retry logic and timeout handling
 - `parseRules()`: Parses DSL text into structured rule object
 - `fetchWordListByPosition()`: Fetches words from bestwordlist.com with pagination support
 - `extractWordsFromHtml()`: Extracts valid words from HTML, excluding invalid words
 - `getNextPageNumber()`: Detects pagination to fetch all pages
 - `checkDeterministicRules()`: Filters words based on all constraints
+- `ensureWordFrequenciesLoaded()`: Loads word frequency data with IndexedDB caching
+- `loadWordFrequencies()`: Fetches 333k word frequencies from Norvig's dataset
+- `getWordFrequency()`: Returns frequency score for a given word
 
 ### Data Sources
 
@@ -180,6 +198,13 @@ The API is only used to translate natural language into the DSL format. Rate lim
 - Pagination (multiple pages per position/length combination)
 
 Example URL: `https://www.bestwordlist.com/p/a/1/words5lettersfirstlettera.htm`
+
+**Peter Norvig's word frequency data** (https://norvig.com/ngrams/count_1w.txt):
+- 333,333 most common English words
+- Based on Google Web Trillion Word Corpus (~2006)
+- Tab-separated format: word + frequency count
+- Used for sorting results by commonness
+- Cached in IndexedDB for performance
 
 ### Error Handling
 
@@ -196,6 +221,8 @@ Example URL: `https://www.bestwordlist.com/p/a/1/words5lettersfirstlettera.htm`
 - **Smart URL selection**: Uses first exact position constraint to minimize fetched words
 - **Deduplication**: Removes duplicate words across pages
 - **Minimal delay**: 100ms between page requests to be respectful to the server
+- **IndexedDB caching**: Word frequencies cached with 1-week expiration (instant on repeat visits)
+- **Efficient sorting**: 333k word dataset sorted in-memory for fast results
 
 ## Example Use Cases
 
@@ -213,7 +240,8 @@ Process:
 1. Fetch all 5-letter words with O at position 3 (721 words across 2 pages)
 2. Filter for words containing R and A
 3. Filter out words with S, T, or E
-Result: GROAN, BROAD, etc.
+4. Sort by word frequency
+Result: Common words first (GROAN, BROAD, etc.), rare words last
 ```
 
 ### Example 2: Six-Letter Words
@@ -243,7 +271,11 @@ LENGTH: 5
 Process:
 1. Fetch all 5-letter words with A at position 1 (538 words across 2 pages)
 2. Filter for words with O at position 3
-Result: 67 words including ABODE, ABORT, ABOUT, ABOVE, AROMA, AROSE, etc.
+3. Sort by word frequency
+Result: 67 words sorted by commonness:
+- Most common: ABOUT (1.2B), ABOVE (141M), AMONG (83M)
+- Less common: AROMA (2M), AROSE (2.6M)
+- Rare: ANOMY (22K), ABOHM (not in freq data)
 ```
 
 ## Limitations
@@ -308,12 +340,13 @@ This project is provided as-is for educational and personal use.
 ## Contributing
 
 Feel free to fork, modify, and improve this tool. Suggestions for enhancements:
-- Cache fetched word lists in localStorage
 - Support for Wordle variants (Quordle, Octordle, etc.)
 - Export/import rule sets
 - Dark mode toggle
 - Offline mode with pre-downloaded word lists
 - Support for constraints without exact positions (fetch from multiple positions and intersect)
+- Visual frequency indicators (e.g., color-coded by commonness)
+- Word definition tooltips
 
 ## Support
 
