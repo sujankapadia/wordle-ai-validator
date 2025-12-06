@@ -222,7 +222,7 @@ Example URL: `https://www.bestwordlist.com/p/a/1/words5lettersfirstlettera.htm`
 - **Deduplication**: Removes duplicate words across pages
 - **Minimal delay**: 100ms between page requests to be respectful to the server
 - **IndexedDB caching**: Word frequencies cached with 1-week expiration (instant on repeat visits)
-- **Efficient sorting**: 333k word dataset sorted in-memory for fast results
+- **Efficient sorting**: Candidate words sorted using in-memory frequency lookup from 333k word dataset
 
 ## Example Use Cases
 
