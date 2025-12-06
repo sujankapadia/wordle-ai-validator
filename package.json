@@ -1,0 +1,24 @@
+{
+  "name": "wordle-ai-validator",
+  "version": "1.0.0",
+  "description": "AI-assisted deterministic filtering for Wordle puzzles",
+  "main": "test-gemini.ts",
+  "scripts": {
+    "test:gemini": "tsx test-gemini.ts",
+    "dev": "tsx test-gemini.ts"
+  },
+  "keywords": [
+    "wordle",
+    "gemini",
+    "ai",
+    "validator"
+  ],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "dotenv": "^16.4.7",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
