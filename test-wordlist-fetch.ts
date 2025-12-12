@@ -114,81 +114,171 @@ function checkRules(word: string, rules: WordleRules): boolean {
 }
 
 /**
- * Fetch word list from bestwordlist.com based on exact position requirements
+ * Check if a page has pagination and extract the next page number
  */
-async function fetchWordListByPosition(rules: WordleRules): Promise<string[]> {
-  // Find the first exact position requirement to determine which page to fetch
-  const exactPositions = Object.keys(rules.exact).map(k => parseInt(k));
-
-  if (exactPositions.length === 0) {
-    console.log("No exact position requirements found. Cannot determine which page to fetch.");
-    return [];
+function getNextPageNumber(html: string): number | null {
+  const nextPageMatch = html.match(/<link rel=next href=[^>]*page(\d+)\.htm>/);
+  if (nextPageMatch) {
+    return parseInt(nextPageMatch[1], 10);
   }
+  return null;
+}
 
-  // Use the first exact position (0-indexed internally, 1-indexed for URL)
-  const position = exactPositions[0];
-  const letter = rules.exact[position];
-  const urlPosition = position + 1; // Convert to 1-indexed
+/**
+ * Fetch words from a specific URL with pagination support
+ */
+async function fetchWordsFromUrl(baseUrl: string, wordLength: number): Promise<string[]> {
+  const allWords: string[] = [];
+  let currentPage = 1;
+  let hasMorePages = true;
 
-  // Build URL based on observed pattern: https://www.bestwordlist.com/p/{letter}/1/words5lettersthirdletter{letter}.htm
-  // The "1" appears to be a constant, and "third" is the ordinal position name
-  const positionNames = ['first', 'second', 'third', 'fourth', 'fifth'];
-  const positionName = positionNames[position] || `position${urlPosition}`;
-
-  const url = `https://www.bestwordlist.com/p/${letter.toLowerCase()}/1/words${rules.length}letters${positionName}letter${letter.toLowerCase()}.htm`;
-
-  console.log(`Fetching word list from: ${url}\n`);
+  // Extract base URL without .htm extension for building page URLs
+  const baseUrlWithoutExt = baseUrl.replace(/\.htm$/, '');
 
   try {
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
+    while (hasMorePages) {
+      const pageUrl = currentPage === 1
+        ? baseUrl
+        : `${baseUrlWithoutExt}page${currentPage}.htm`;
 
-    const html = await response.text();
+      console.log(`    Page ${currentPage}: ${pageUrl}`);
 
-    // Extract words from the HTML
-    // Words are formatted like: AB<b>O</b>DE (with the middle letter in bold)
-    // They appear in spans with <span class=rd> for red (invalid in North America)
-    // and <span class=gn> for green (valid only in North America)
-    // Black (no span) means valid worldwide
+      const response = await fetch(pageUrl);
+      if (!response.ok) {
+        if (response.status === 404 && currentPage > 1) {
+          console.log(`    Page ${currentPage} not found. Finished pagination.`);
+          break;
+        }
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
 
-    // Remove all <b> tags to get clean words
-    const cleanHtml = html.replace(/<b>|<\/b>/g, '');
+      const html = await response.text();
 
-    // Extract words that are NOT in red spans (we want black and green words)
-    // Pattern: Match sequences of 5 uppercase letters that are not inside <span class=rd>...</span>
-    const wordRegex = /\b([A-Z]{5})\b/g;
-    const redSpanRegex = /<span class=rd>(.*?)<\/span>/g;
+      // Remove all <b> tags to get clean words
+      const cleanHtml = html.replace(/<b>|<\/b>/g, '');
 
-    // First, remove all red spans
-    const htmlWithoutRed = cleanHtml.replace(redSpanRegex, '');
+      // Remove all red spans (invalid words)
+      const redSpanRegex = /<span class=rd>(.*?)<\/span>/g;
+      const htmlWithoutRed = cleanHtml.replace(redSpanRegex, '');
 
-    // Now extract all 5-letter words
-    const matches = [];
-    let match;
-    while ((match = wordRegex.exec(htmlWithoutRed)) !== null) {
-      const word = match[1];
-      if (word.length === rules.length && /^[A-Z]+$/.test(word)) {
-        matches.push(word);
+      // Extract all words of the specified length
+      const wordRegex = new RegExp(`\\b([A-Z]{${wordLength}})\\b`, 'g');
+      const matches = [];
+      let match;
+      while ((match = wordRegex.exec(htmlWithoutRed)) !== null) {
+        const word = match[1];
+        if (word.length === wordLength && /^[A-Z]+$/.test(word)) {
+          matches.push(word);
+        }
+      }
+
+      allWords.push(...matches);
+      console.log(`    Found ${matches.length} words on page ${currentPage}`);
+
+      // Check for next page
+      const nextPageNum = getNextPageNumber(html);
+      if (nextPageNum && nextPageNum === currentPage + 1) {
+        currentPage = nextPageNum;
+        // Small delay to be respectful to the server
+        await new Promise(resolve => setTimeout(resolve, 100));
+      } else {
+        hasMorePages = false;
       }
     }
 
-    if (matches.length === 0) {
-      console.log("No words found in the page.");
+    return allWords;
+
+  } catch (error: any) {
+    console.error(`  Error fetching from ${baseUrl}: ${error.message}`);
+    return [];
+  }
+}
+
+/**
+ * Calculate allowed positions for a "present" letter based on disallowed positions
+ */
+function getAllowedPositions(wordLength: number, disallowedPositions: number[]): number[] {
+  const allPositions = Array.from({ length: wordLength }, (_, i) => i);
+  return allPositions.filter(pos => !disallowedPositions.includes(pos));
+}
+
+/**
+ * Fetch word list from bestwordlist.com based on exact or present position requirements
+ */
+async function fetchWordListByPosition(rules: WordleRules): Promise<string[]> {
+  const positionNames = ['first', 'second', 'third', 'fourth', 'fifth'];
+  const allWords: string[] = [];
+
+  // Strategy 1: If there are exact position requirements, use them
+  const exactPositions = Object.keys(rules.exact).map(k => parseInt(k));
+
+  if (exactPositions.length > 0) {
+    console.log("Found exact position constraints. Using first exact position.\n");
+
+    const position = exactPositions[0];
+    const letter = rules.exact[position];
+    const positionName = positionNames[position] || `position${position + 1}`;
+
+    const url = `https://www.bestwordlist.com/p/${letter.toLowerCase()}/1/words${rules.length}letters${positionName}letter${letter.toLowerCase()}.htm`;
+
+    const words = await fetchWordsFromUrl(url, rules.length);
+    allWords.push(...words);
+
+    console.log(`  Found ${words.length} words with ${letter} at position ${position + 1}\n`);
+
+  } else {
+    // Strategy 2: No exact positions - use "present" constraints
+    console.log("No exact position constraints found.");
+    console.log("Finding best 'present' constraint to use for fetching...\n");
+
+    // Find the "present" letter with the fewest allowed positions
+    let bestLetter: string | null = null;
+    let bestAllowedPositions: number[] = [];
+    let minPositionCount = Infinity;
+
+    for (const letter in rules.present) {
+      const disallowedPositions = rules.present[letter];
+      const allowedPositions = getAllowedPositions(rules.length, disallowedPositions);
+
+      console.log(`  Letter ${letter}:`);
+      console.log(`    Disallowed at: ${disallowedPositions.map(p => p + 1).join(', ') || 'none'}`);
+      console.log(`    Allowed at: ${allowedPositions.map(p => p + 1).join(', ')}`);
+      console.log(`    Total allowed positions: ${allowedPositions.length}`);
+
+      if (allowedPositions.length < minPositionCount && allowedPositions.length > 0) {
+        minPositionCount = allowedPositions.length;
+        bestLetter = letter;
+        bestAllowedPositions = allowedPositions;
+      }
+    }
+
+    if (!bestLetter || bestAllowedPositions.length === 0) {
+      console.log("\nNo valid 'present' constraints found to use for fetching.");
       return [];
     }
 
-    // Remove duplicates
-    const uniqueWords = Array.from(new Set(matches));
+    console.log(`\nSelected letter: ${bestLetter} (${bestAllowedPositions.length} allowed positions)`);
+    console.log(`Will fetch words with ${bestLetter} at positions: ${bestAllowedPositions.map(p => p + 1).join(', ')}\n`);
 
-    console.log(`Found ${uniqueWords.length} unique ${rules.length}-letter words on the page (excluding red/invalid words).\n`);
-    return uniqueWords;
+    // Fetch words for each allowed position
+    for (const position of bestAllowedPositions) {
+      const positionName = positionNames[position] || `position${position + 1}`;
+      const url = `https://www.bestwordlist.com/p/${bestLetter.toLowerCase()}/1/words${rules.length}letters${positionName}letter${bestLetter.toLowerCase()}.htm`;
 
-  } catch (error: any) {
-    console.error(`Error fetching word list: ${error.message}`);
-    return [];
+      const words = await fetchWordsFromUrl(url, rules.length);
+      allWords.push(...words);
+
+      console.log(`  Found ${words.length} words with ${bestLetter} at position ${position + 1}`);
+    }
+
+    console.log();
   }
+
+  // Remove duplicates
+  const uniqueWords = Array.from(new Set(allWords));
+  console.log(`Total unique words fetched: ${uniqueWords.length}\n`);
+
+  return uniqueWords;
 }
 
 /**
@@ -197,11 +287,11 @@ async function fetchWordListByPosition(rules: WordleRules): Promise<string[]> {
 async function main() {
   console.log("=== Word List Fetching Prototype ===\n");
 
-  // Test DSL rules
-  const dslRules = `LENGTH: 5
-O at 3
-A in word
-no S, T, R, E, C, L, U, D`;
+  // Test DSL rules - using your example with only present constraints
+  const dslRules = `A in word, not at 1, 2, 3
+T in word, not at 2, 4
+no C, D, E, L, O, R, S, U, Y
+LENGTH: 5`;
 
   console.log("DSL Rules:");
   console.log(dslRules);
@@ -217,6 +307,21 @@ no S, T, R, E, C, L, U, D`;
 
   // Filter words based on all rules
   console.log("=== Filtering Words ===\n");
+
+  // Debug: Show some sample words before filtering
+  console.log("Sample words fetched (first 10):");
+  allWords.slice(0, 10).forEach(word => console.log(`  ${word}`));
+  console.log();
+
+  // Debug: Check how many have T
+  const wordsWithT = allWords.filter(w => w.includes('T'));
+  console.log(`Words with T: ${wordsWithT.length} out of ${allWords.length}`);
+  if (wordsWithT.length > 0) {
+    console.log("Sample words with T:");
+    wordsWithT.slice(0, 10).forEach(word => console.log(`  ${word}`));
+  }
+  console.log();
+
   const validWords = allWords.filter(word => checkRules(word, rules));
 
   console.log(`Valid words found: ${validWords.length}\n`);
@@ -226,6 +331,17 @@ no S, T, R, E, C, L, U, D`;
     validWords.forEach(word => console.log(`  ${word}`));
   } else {
     console.log("No words found matching all criteria.");
+
+    // Debug: Check a few words manually
+    console.log("\nDebug: Checking why words failed...");
+    const sampleWords = allWords.slice(0, 5);
+    for (const word of sampleWords) {
+      console.log(`\nChecking word: ${word}`);
+      console.log(`  Has T? ${word.includes('T')}`);
+      console.log(`  T positions in word: ${[...word].map((c, i) => c === 'T' ? i + 1 : null).filter(x => x !== null).join(', ') || 'none'}`);
+      console.log(`  T disallowed positions (1-indexed): ${rules.present['T'].map(p => p + 1).join(', ')}`);
+      console.log(`  Result: ${checkRules(word, rules) ? 'PASS' : 'FAIL'}`);
+    }
   }
 }
 

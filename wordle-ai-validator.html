@@ -360,28 +360,22 @@
         }
 
         /**
-         * Fetch word list from bestwordlist.com based on exact position requirements
-         * Handles pagination to fetch all words across multiple pages
+         * Calculate allowed positions for a "present" letter based on disallowed positions
          */
-        async function fetchWordListByPosition(rules) {
-            const exactPositions = Object.keys(rules.exact).map(k => parseInt(k));
+        function getAllowedPositions(wordLength, disallowedPositions) {
+            const allPositions = Array.from({ length: wordLength }, (_, i) => i);
+            return allPositions.filter(pos => !disallowedPositions.includes(pos));
+        }
 
-            if (exactPositions.length === 0) {
-                console.log("No exact position requirements found. Cannot fetch from bestwordlist.com.");
-                return [];
-            }
-
-            const position = exactPositions[0];
-            const letter = rules.exact[position];
-
+        /**
+         * Fetch words from a specific letter-position URL with pagination
+         */
+        async function fetchWordsFromPosition(letter, position, wordLength) {
             const positionNames = ['first', 'second', 'third', 'fourth', 'fifth'];
             const positionName = positionNames[position] || `position${position + 1}`;
 
-            // Base URL pattern for page 1 (using CORS proxy)
-            const baseUrl = `${CORS_PROXY}https://www.bestwordlist.com/p/${letter.toLowerCase()}/1/words${rules.length}letters${positionName}letter${letter.toLowerCase()}`;
+            const baseUrl = `${CORS_PROXY}https://www.bestwordlist.com/p/${letter.toLowerCase()}/1/words${wordLength}letters${positionName}letter${letter.toLowerCase()}`;
             const page1Url = `${baseUrl}.htm`;
-
-            console.log(`Fetching word list from: ${page1Url}`);
 
             const allWords = [];
             let currentPage = 1;
@@ -393,45 +387,108 @@
                         ? page1Url
                         : `${baseUrl}page${currentPage}.htm`;
 
-                    console.log(`Fetching page ${currentPage}: ${pageUrl}`);
-                    $('validationStatus').textContent = `Fetching page ${currentPage} from bestwordlist.com...`;
+                    console.log(`  Fetching page ${currentPage}: ${pageUrl}`);
+                    $('validationStatus').textContent = `Fetching ${letter} at position ${position + 1}, page ${currentPage}...`;
 
                     const response = await fetch(pageUrl);
                     if (!response.ok) {
                         if (response.status === 404 && currentPage > 1) {
-                            // No more pages
-                            console.log(`Page ${currentPage} not found. Finished pagination.`);
+                            console.log(`  Page ${currentPage} not found. Finished pagination.`);
                             break;
                         }
                         throw new Error(`HTTP error! status: ${response.status}`);
                     }
 
                     const html = await response.text();
-
-                    // Extract words from this page
-                    const pageWords = extractWordsFromHtml(html, rules.length);
-                    console.log(`  Found ${pageWords.length} words on page ${currentPage}`);
+                    const pageWords = extractWordsFromHtml(html, wordLength);
+                    console.log(`    Found ${pageWords.length} words on page ${currentPage}`);
                     allWords.push(...pageWords);
 
                     // Check for next page
                     const nextPageNum = getNextPageNumber(html);
                     if (nextPageNum && nextPageNum === currentPage + 1) {
                         currentPage = nextPageNum;
-                        // Small delay to be respectful to the server
                         await new Promise(resolve => setTimeout(resolve, 100));
                     } else {
                         hasMorePages = false;
                     }
                 }
 
-                const uniqueWords = Array.from(new Set(allWords));
-                console.log(`Total: Found ${uniqueWords.length} unique valid words across ${currentPage} page(s)`);
-                return uniqueWords;
+                return allWords;
 
             } catch (error) {
-                console.error(`Error fetching word list: ${error.message}`);
+                console.error(`  Error fetching ${letter} at position ${position + 1}: ${error.message}`);
                 return [];
             }
+        }
+
+        /**
+         * Fetch word list from bestwordlist.com based on exact or present position requirements
+         * Handles pagination to fetch all words across multiple pages
+         */
+        async function fetchWordListByPosition(rules) {
+            const positionNames = ['first', 'second', 'third', 'fourth', 'fifth'];
+            const allWords = [];
+
+            // Strategy 1: If there are exact position requirements, use them
+            const exactPositions = Object.keys(rules.exact).map(k => parseInt(k));
+
+            if (exactPositions.length > 0) {
+                console.log("Found exact position constraints. Using first exact position.");
+
+                const position = exactPositions[0];
+                const letter = rules.exact[position];
+
+                console.log(`Fetching words with ${letter} at position ${position + 1}...`);
+                const words = await fetchWordsFromPosition(letter, position, rules.length);
+                allWords.push(...words);
+
+                console.log(`Found ${words.length} words with ${letter} at position ${position + 1}`);
+
+            } else {
+                // Strategy 2: No exact positions - use "present" constraints
+                console.log("No exact position constraints found.");
+                console.log("Finding best 'present' constraint to use for fetching...");
+
+                // Find the "present" letter with the fewest allowed positions
+                let bestLetter = null;
+                let bestAllowedPositions = [];
+                let minPositionCount = Infinity;
+
+                for (const letter in rules.present) {
+                    const disallowedPositions = rules.present[letter];
+                    const allowedPositions = getAllowedPositions(rules.length, disallowedPositions);
+
+                    console.log(`  Letter ${letter}: allowed at positions ${allowedPositions.map(p => p + 1).join(', ')} (${allowedPositions.length} total)`);
+
+                    if (allowedPositions.length < minPositionCount && allowedPositions.length > 0) {
+                        minPositionCount = allowedPositions.length;
+                        bestLetter = letter;
+                        bestAllowedPositions = allowedPositions;
+                    }
+                }
+
+                if (!bestLetter || bestAllowedPositions.length === 0) {
+                    console.log("No valid 'present' constraints found to use for fetching.");
+                    $('validationStatus').textContent = 'No position constraints found. Cannot fetch words.';
+                    return [];
+                }
+
+                console.log(`Selected letter: ${bestLetter} (${bestAllowedPositions.length} allowed positions)`);
+                console.log(`Will fetch words with ${bestLetter} at positions: ${bestAllowedPositions.map(p => p + 1).join(', ')}`);
+
+                // Fetch words for each allowed position
+                for (const position of bestAllowedPositions) {
+                    console.log(`Fetching words with ${bestLetter} at position ${position + 1}...`);
+                    const words = await fetchWordsFromPosition(bestLetter, position, rules.length);
+                    allWords.push(...words);
+                    console.log(`  Found ${words.length} words with ${bestLetter} at position ${position + 1}`);
+                }
+            }
+
+            const uniqueWords = Array.from(new Set(allWords));
+            console.log(`Total: Found ${uniqueWords.length} unique words`);
+            return uniqueWords;
         }
 
         /**
@@ -475,8 +532,11 @@ If length is not specified, assume LENGTH: 5.
 STRICTLY use the following DSL format with each rule on a separate line (separated by \\n):
 - Exact position (Green): [LETTER] at [POSITION] (e.g., O at 3)
 - Present in word (Yellow): [LETTER] in word (e.g., A in word)
+- Present but NOT at specific positions (Yellow): [LETTER] in word, not at [POSITIONS] (e.g., A in word, not at 1, 2, 3)
 - Absent (Gray): no [LETTERS, comma-separated] (e.g., no S, T, R, E)
 - Length: LENGTH: [NUMBER] (e.g., LENGTH: 5)
+
+IMPORTANT: When a letter must be in the word but its position is constrained (not allowed at certain positions), use the "in word, not at" format.
 
 Example output:
 {"dsl_rules": "O at 3\\nA in word\\nno S, T, R, E\\nLENGTH: 5"}`;
@@ -515,8 +575,8 @@ Example output:
                         const allWords = await fetchWordListByPosition(rules);
 
                         if (allWords.length === 0) {
-                            $('wordListInput').value = 'No words found. Make sure there is at least one exact position constraint.';
-                            $('results').innerHTML = '<p class="text-red-500 font-semibold p-2">No words fetched. Exact position constraints are required.</p>';
+                            $('wordListInput').value = 'No words found. Make sure there is at least one position constraint (exact or present with exclusions).';
+                            $('results').innerHTML = '<p class="text-red-500 font-semibold p-2">No words fetched. At least one position constraint is required.</p>';
                             return;
                         }
 
