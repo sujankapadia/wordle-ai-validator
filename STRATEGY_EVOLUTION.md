@@ -563,21 +563,194 @@ Results (sorted by commonness):
 
 ---
 
+## Strategy 9: Support Present Letter Constraints with Position Exclusions ⭐ (Current)
+
+### Problem
+Previous strategies required at least one **exact position** constraint (e.g., "O at 3") to fetch words from bestwordlist.com. Natural language like:
+> "The word has 'A' and 'T' in it, 'A' is the 4th or 5th letter, 'T' is the 1st, 3rd or 5th letter"
+
+Would fail because there are no exact positions - only **present** constraints with **position exclusions**:
+- `A in word` (could be anywhere)
+- `T in word, not at 2, 4` (must be present but not at positions 2 or 4)
+
+### Discovery
+The DSL already supported position exclusions via parsing logic, but:
+1. **Gemini wasn't generating them** - System prompt didn't mention the "not at" format
+2. **Word fetching failed** - Required exact positions, couldn't handle present-only constraints
+
+### Approach
+1. **Update Gemini system prompt** to include `[LETTER] in word, not at [POSITIONS]` format
+2. **Calculate allowed positions** from exclusions (e.g., "not at 1, 2, 3" = allowed at 4, 5)
+3. **Smart fetching strategy**: When no exact positions exist:
+   - Find the present letter with **fewest allowed positions**
+   - Fetch words from each allowed position URL
+   - Combine results and filter locally for all other constraints
+
+### Implementation Details
+
+#### Updated DSL Format
+```javascript
+const systemPrompt = `You are a Wordle Rule Translator...
+STRICTLY use the following DSL format:
+- Exact position: [LETTER] at [POSITION] (e.g., O at 3)
+- Present in word: [LETTER] in word (e.g., A in word)
+- Present but NOT at specific positions: [LETTER] in word, not at [POSITIONS]
+  (e.g., A in word, not at 1, 2, 3)
+- Absent: no [LETTERS, comma-separated] (e.g., no S, T, R, E)
+- Length: LENGTH: [NUMBER] (e.g., LENGTH: 5)
+
+IMPORTANT: When a letter must be in the word but its position is constrained
+(not allowed at certain positions), use the "in word, not at" format.`;
+```
+
+#### Calculate Allowed Positions
+```javascript
+function getAllowedPositions(wordLength, disallowedPositions) {
+    const allPositions = Array.from({ length: wordLength }, (_, i) => i);
+    return allPositions.filter(pos => !disallowedPositions.includes(pos));
+}
+
+// Example: "A in word, not at 1, 2, 3"
+// disallowedPositions = [0, 1, 2] (0-indexed)
+// returns: [3, 4] (positions 4, 5 in 1-indexed)
+```
+
+#### Smart Fetching Strategy
+```javascript
+async function fetchWordListByPosition(rules) {
+    const exactPositions = Object.keys(rules.exact).map(k => parseInt(k));
+
+    if (exactPositions.length > 0) {
+        // Strategy 1: Use exact position (existing behavior)
+        const position = exactPositions[0];
+        const letter = rules.exact[position];
+        return await fetchWordsFromPosition(letter, position, rules.length);
+    } else {
+        // Strategy 2: Use present constraints (NEW)
+        // Find letter with fewest allowed positions
+        let bestLetter = null;
+        let bestAllowedPositions = [];
+        let minPositionCount = Infinity;
+
+        for (const letter in rules.present) {
+            const disallowedPositions = rules.present[letter];
+            const allowedPositions = getAllowedPositions(rules.length, disallowedPositions);
+
+            if (allowedPositions.length < minPositionCount && allowedPositions.length > 0) {
+                minPositionCount = allowedPositions.length;
+                bestLetter = letter;
+                bestAllowedPositions = allowedPositions;
+            }
+        }
+
+        // Fetch words for each allowed position
+        const allWords = [];
+        for (const position of bestAllowedPositions) {
+            const words = await fetchWordsFromPosition(bestLetter, position, rules.length);
+            allWords.push(...words);
+        }
+
+        return Array.from(new Set(allWords)); // Deduplicate
+    }
+}
+```
+
+### Example Execution
+
+#### Input
+Natural language:
+> "The word has 'A' and 'T' in it, 'A' is the 4th or 5th letter, 'T' is the 1st, 3rd or 5th letter and no E,R,Y,U,O,S,D,L or C"
+
+#### Generated DSL
+```
+A in word, not at 1, 2, 3
+T in word, not at 2, 4
+no C, D, E, L, O, R, S, U, Y
+LENGTH: 5
+```
+
+#### Processing Logic
+```
+1. Calculate allowed positions:
+   - A: not at 1,2,3 → allowed at 4,5 (2 positions)
+   - T: not at 2,4   → allowed at 1,3,5 (3 positions)
+
+2. Select best letter: A (fewer allowed positions = smaller dataset)
+
+3. Fetch words:
+   - Fetch all words with A at position 4 (759 words across 3 pages)
+   - Fetch all words with A at position 5 (444 words across 2 pages)
+   - Combined: 1,175 unique words
+
+4. Filter locally:
+   - Must have T at position 1, 3, or 5
+   - Must not contain C, D, E, L, O, R, S, U, Y
+
+5. Results: 5 valid words
+   - TITAN
+   - VIVAT
+   - WITAN
+   - TIBIA
+   - TIKKA
+```
+
+### Why Choose Fewest Allowed Positions?
+
+**Efficiency**: Fewer positions = fewer API calls and smaller total dataset
+
+Example comparison:
+- **Option A**: Use letter A (2 allowed positions)
+  - Fetch: A at 4 + A at 5 = 1,175 words total
+  - Filter locally for T constraint
+
+- **Option B**: Use letter T (3 allowed positions)
+  - Fetch: T at 1 + T at 3 + T at 5 = ~1,500+ words total
+  - Filter locally for A constraint
+
+Option A is more efficient (fewer API calls, smaller dataset).
+
+### Testing Approach
+
+Created test cases in `test-wordlist-fetch.ts`:
+1. Added pagination support to test file
+2. Tested with present-only constraints (no exact positions)
+3. Verified all 5 expected words were found
+4. Confirmed fetching strategy selected optimal letter
+
+### Results
+- ✅ **Handles constraints without exact positions**
+- ✅ **Smart fetching minimizes API calls** (chooses letter with fewest positions)
+- ✅ **Pagination works across multiple position URLs**
+- ✅ **Returns correct results** (TITAN, VIVAT, WITAN, TIBIA, TIKKA)
+- ✅ **Gemini now generates position exclusions** in DSL format
+- ✅ **Maintains same performance** (5-10 seconds total)
+
+### UI Simplification
+
+Also removed redundant "Candidate Pool" section:
+- Previous UI showed both "Candidate Pool" (textarea) and "Results" (styled cards)
+- Both displayed identical filtered/sorted word lists
+- Consolidated into single "Results" section
+- Artifact from earlier version that used dictionary validation
+
+---
+
 ## Future Potential Enhancements
 
 Based on learnings from this evolution:
 
 1. **Cache word lists in IndexedDB** - Avoid re-fetching the same position lists from bestwordlist.com
-2. **Support constraints without exact positions** - Fetch from multiple positions and intersect
+2. ~~**Support constraints without exact positions**~~ ✅ **Completed in Strategy 9**
 3. **Parallel page fetching** - Fetch pagination pages concurrently instead of sequentially
 4. **Offline mode** - Pre-download common position lists for offline use
 5. **Progressive results** - Show words as pages are fetched (streaming results)
 6. **Visual frequency indicators** - Color-coded badges or bars showing commonness
 7. **Word definition tooltips** - Show definitions on hover (in addition to frequency)
+8. **Multi-constraint optimization** - When multiple present letters exist, try different combinations to find smallest dataset
 
 ---
 
 **Document Created**: 2025-01-05
-**Document Updated**: 2025-01-06 (added Strategy 7 & 8)
+**Document Updated**: 2025-12-12 (added Strategy 9)
 **Project**: Wordle AI Validator
-**Current Strategy**: Strategy 8 (Gemini DSL + bestwordlist.com with pagination + word frequency sorting with IndexedDB caching)
+**Current Strategy**: Strategy 9 (Gemini DSL + bestwordlist.com with smart position fetching + word frequency sorting with IndexedDB caching)
