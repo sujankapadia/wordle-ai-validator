@@ -67,7 +67,7 @@
                           placeholder="e.g., The word has 'A' in it, 'O' is the third letter, and no S, T, R, E, C, L, U, D. The word must be 6 letters long.">The word has 'A' in it, 'O' is the third letter, and no S, T, R, E, C, L, U, D</textarea>
 
                 <button onclick="generateDslAndFetchWords()" id="generateButton" class="mt-4 w-full bg-purple-600 text-white py-3 rounded-lg font-bold hover:bg-purple-700 transition duration-150 relative flex items-center justify-center">
-                    <span id="buttonText">Generate DSL & Fetch Candidate Words</span>
+                    <span id="buttonText">Generate DSL & Fetch Words</span>
                     <div id="loadingIndicator" class="absolute right-4 hidden">
                         <div class="spinner"></div>
                     </div>
@@ -84,28 +84,21 @@
                           placeholder="DSL rules generated here..."></textarea>
             </div>
 
-            <!-- WORD LIST / RESULTS -->
+            <!-- RESULTS -->
             <div class="lg:col-span-1">
-            
-                <!-- Word List Card (Step 3) -->
-                <div class="card p-6 rounded-xl mb-6">
-                    <h2 class="text-2xl font-semibold mb-4 text-gray-700">3. Candidate Pool</h2>
+
+                <!-- Results Card -->
+                <div class="card p-6 rounded-xl">
+                    <h2 class="text-2xl font-semibold mb-4 text-gray-700">3. Results (<span id="resultCount">0</span> Words)</h2>
                     <p class="text-sm text-gray-500 mb-2">
-                        Valid Scrabble words fetched from bestwordlist.com. <span id="wordListCount" class="font-semibold"></span>
+                        Valid Scrabble words sorted by commonness. <span id="wordListCount" class="font-semibold"></span>
                     </p>
                     <div id="validationStatus" class="validation-status text-info mb-3">
                         Ready to fetch words.
                     </div>
 
-                    <textarea id="wordListInput"
-                              class="w-full h-40 p-3 border-2 border-gray-300 rounded-lg text-sm focus:border-blue-500 focus:ring-blue-500" readonly>Click "Generate DSL & Fetch Candidate Words" above to populate this list.</textarea>
-                </div>
-
-                <!-- Results Card (Step 4) -->
-                <div class="card p-6 rounded-xl">
-                    <h2 class="text-2xl font-semibold mb-4 text-gray-700">4. Results (<span id="resultCount">0</span> Words)</h2>
-                    <div id="results" class="space-y-2 h-40 overflow-y-auto p-2 border border-gray-200 rounded-lg bg-gray-50">
-                        <p class="text-gray-500 text-sm">Valid results will appear here.</p>
+                    <div id="results" class="space-y-2 h-96 overflow-y-auto p-2 border border-gray-200 rounded-lg bg-gray-50">
+                        <p class="text-gray-500 text-sm">Click "Generate DSL & Fetch Words" above to see results.</p>
                     </div>
                 </div>
 
@@ -507,7 +500,6 @@
                 $('buttonText').textContent = 'Generating DSL...';
                 $('generateButton').disabled = true;
                 $('ruleInput').value = 'Generating DSL rules from prompt...';
-                $('wordListInput').value = 'Waiting for DSL generation...';
                 $('results').innerHTML = '<p class="text-gray-500 text-sm p-2">Step 1: Translating natural language to DSL...</p>';
 
                 const prompt = $('promptInput').value.trim();
@@ -569,14 +561,12 @@ Example output:
 
                         // Fetch candidate words from bestwordlist.com
                         $('buttonText').textContent = 'Fetching Words...';
-                        $('wordListInput').value = 'Fetching words from bestwordlist.com...';
-                        $('results').innerHTML = '<p class="text-gray-500 text-sm p-2">Step 2: Fetching candidate words from bestwordlist.com...</p>';
+                        $('results').innerHTML = '<p class="text-gray-500 text-sm p-2">Step 2: Fetching words from bestwordlist.com...</p>';
 
                         const allWords = await fetchWordListByPosition(rules);
 
                         if (allWords.length === 0) {
-                            $('wordListInput').value = 'No words found. Make sure there is at least one position constraint (exact or present with exclusions).';
-                            $('results').innerHTML = '<p class="text-red-500 font-semibold p-2">No words fetched. At least one position constraint is required.</p>';
+                            $('results').innerHTML = '<p class="text-red-500 font-semibold p-2">No words found. At least one position constraint is required.</p>';
                             return;
                         }
 
@@ -597,13 +587,11 @@ Example output:
                         });
                         console.log('Sorted words:', sortedWords);
 
-                        // Display the candidate words
-                        $('wordListInput').value = sortedWords.join('\n');
-                        $('wordListCount').textContent = `(${sortedWords.length} words found)`;
-                        $('validationStatus').className = 'validation-status bg-green-200 text-green-800 ml-2';
-                        $('validationStatus').textContent = `Found ${sortedWords.length} valid Scrabble words (sorted by commonness)!`;
-
                         // Display results
+                        $('wordListCount').textContent = `(${sortedWords.length} found)`;
+                        $('validationStatus').className = 'validation-status bg-green-200 text-green-800 ml-2';
+                        $('validationStatus').textContent = `Found ${sortedWords.length} valid words!`;
+
                         const resultsDiv = $('results');
                         resultsDiv.innerHTML = '';
                         sortedWords.forEach(word => {
@@ -621,7 +609,7 @@ Example output:
                     }
                 } else {
                     $('ruleInput').value = "Error: Could not generate DSL. Check console for details.";
-                    $('wordListInput').value = "Error: Could not generate DSL. Check console for details.";
+                    $('results').innerHTML = '<p class="text-red-500 font-semibold p-2">Error: Could not generate DSL. Check console for details.</p>';
                     $('resultCount').textContent = 0;
                 }
 
@@ -632,7 +620,7 @@ Example output:
             } finally {
                 // Reset loading state
                 $('loadingIndicator').classList.add('hidden');
-                $('buttonText').textContent = 'Generate DSL & Fetch Candidate Words';
+                $('buttonText').textContent = 'Generate DSL & Fetch Words';
                 $('generateButton').disabled = false;
             }
         }
