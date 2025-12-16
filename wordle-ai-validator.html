@@ -97,8 +97,8 @@
                         Ready to fetch words.
                     </div>
 
-                    <div id="results" class="space-y-2 h-96 overflow-y-auto p-2 border border-gray-200 rounded-lg bg-gray-50">
-                        <p class="text-gray-500 text-sm">Click "Generate DSL & Fetch Words" above to see results.</p>
+                    <div id="results" class="grid grid-cols-1 gap-2 h-96 overflow-y-auto p-4 border border-purple-200 rounded-lg bg-purple-50 text-purple-900 font-['Clear_Sans','Arial','Helvetica',sans-serif] uppercase">
+                        <p class="text-purple-700 text-sm">Click "Generate DSL & Fetch Words" above to see results.</p>
                     </div>
                 </div>
 
@@ -491,7 +491,7 @@
             try {
                 const apiKey = $('apiKeyInput').value.trim();
                 if (!apiKey) {
-                    $('results').innerHTML = '<p class="text-red-500 font-semibold p-2">API Key is required.</p>';
+                    $('results').innerHTML = '<p class="text-purple-900 font-semibold p-2 bg-purple-100 border border-purple-200 rounded">API Key is required.</p>';
                     return;
                 }
 
@@ -500,7 +500,7 @@
                 $('buttonText').textContent = 'Generating DSL...';
                 $('generateButton').disabled = true;
                 $('ruleInput').value = 'Generating DSL rules from prompt...';
-                $('results').innerHTML = '<p class="text-gray-500 text-sm p-2">Step 1: Translating natural language to DSL...</p>';
+                $('results').innerHTML = '<p class="text-purple-900 text-sm p-2 bg-purple-100 border border-purple-200 rounded">Step 1: Translating natural language to DSL...</p>';
 
                 const prompt = $('promptInput').value.trim();
                 if (!prompt) {
@@ -561,12 +561,12 @@ Example output:
 
                         // Fetch candidate words from bestwordlist.com
                         $('buttonText').textContent = 'Fetching Words...';
-                        $('results').innerHTML = '<p class="text-gray-500 text-sm p-2">Step 2: Fetching words from bestwordlist.com...</p>';
+                        $('results').innerHTML = '<p class="text-purple-900 text-sm p-2 bg-purple-100 border border-purple-200 rounded">Step 2: Fetching words from bestwordlist.com...</p>';
 
                         const allWords = await fetchWordListByPosition(rules);
 
                         if (allWords.length === 0) {
-                            $('results').innerHTML = '<p class="text-red-500 font-semibold p-2">No words found. At least one position constraint is required.</p>';
+                            $('results').innerHTML = '<p class="text-purple-900 font-semibold p-2 bg-purple-100 border border-purple-200 rounded">No words found. At least one position constraint is required.</p>';
                             return;
                         }
 
@@ -596,27 +596,31 @@ Example output:
                         resultsDiv.innerHTML = '';
                         sortedWords.forEach(word => {
                             const freq = getWordFrequency(word);
-                            const wordElement = document.createElement('div');
-                            wordElement.className = 'text-lg font-mono p-2 bg-white border border-green-300 rounded-lg hover:bg-green-50 cursor-pointer';
-                            wordElement.textContent = word;
-                            // Add frequency as tooltip
+                            const wordRow = document.createElement('div');
+                            wordRow.className = 'flex gap-1 justify-start transition-transform duration-150 hover:-translate-y-0.5';
                             if (freq > 0) {
-                                wordElement.title = `Frequency: ${freq.toLocaleString()}`;
+                                wordRow.title = `Frequency: ${freq.toLocaleString()}`;
                             }
-                            resultsDiv.appendChild(wordElement);
+                            word.toUpperCase().split('').forEach(letter => {
+                                const tile = document.createElement('div');
+                                tile.className = 'w-10 h-10 sm:w-12 sm:h-12 flex items-center justify-center text-lg sm:text-xl font-bold border-2 rounded-sm bg-purple-100 text-purple-900 border-purple-200 tracking-widest hover:bg-purple-200 cursor-default';
+                                tile.textContent = letter;
+                                wordRow.appendChild(tile);
+                            });
+                            resultsDiv.appendChild(wordRow);
                         });
                         $('resultCount').textContent = sortedWords.length;
                     }
                 } else {
                     $('ruleInput').value = "Error: Could not generate DSL. Check console for details.";
-                    $('results').innerHTML = '<p class="text-red-500 font-semibold p-2">Error: Could not generate DSL. Check console for details.</p>';
+                    $('results').innerHTML = '<p class="text-purple-900 font-semibold p-2 bg-purple-100 border border-purple-200 rounded">Error: Could not generate DSL. Check console for details.</p>';
                     $('resultCount').textContent = 0;
                 }
 
             } catch (error) {
                 console.error("Error during word fetching:", error);
                 $('ruleInput').value = `Error: ${error.message}`;
-                $('results').innerHTML = `<p class="text-red-500 font-semibold p-2">An error occurred: ${error.message.substring(0, 80)}</p>`;
+                $('results').innerHTML = `<p class="text-purple-900 font-semibold p-2 bg-purple-100 border border-purple-200 rounded">An error occurred: ${error.message.substring(0, 80)}</p>`;
             } finally {
                 // Reset loading state
                 $('loadingIndicator').classList.add('hidden');
