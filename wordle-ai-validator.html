@@ -40,6 +40,67 @@
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
+
+        /* Wordle-style letter tiles */
+        .word-row {
+            display: flex;
+            gap: 5px;
+            margin-bottom: 8px;
+            justify-content: flex-start;
+        }
+
+        .letter-tile {
+            width: 50px;
+            height: 50px;
+            border: 2px solid #d3d6da;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            font-weight: bold;
+            text-transform: uppercase;
+            color: white;
+            border-radius: 2px;
+        }
+
+        .letter-tile.green {
+            background-color: #6aaa64;
+            border-color: #6aaa64;
+        }
+
+        .letter-tile.yellow {
+            background-color: #c9b458;
+            border-color: #c9b458;
+        }
+
+        .letter-tile.gray {
+            background-color: #787c7e;
+            border-color: #787c7e;
+        }
+
+        .letter-tile.default {
+            background-color: #d3d6da;
+            border-color: #d3d6da;
+            color: #1f2937;
+        }
+
+        .word-row:hover .letter-tile {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+
+        .letter-tile {
+            transition: transform 0.15s ease, box-shadow 0.15s ease;
+        }
+
+        /* Responsive tile sizing */
+        @media (max-width: 640px) {
+            .letter-tile {
+                width: 40px;
+                height: 40px;
+                font-size: 20px;
+            }
+        }
     </style>
 </head>
 <body class="p-4 sm:p-8">
@@ -97,8 +158,8 @@
                         Ready to fetch words.
                     </div>
 
-                    <div id="results" class="space-y-2 h-96 overflow-y-auto p-2 border border-gray-200 rounded-lg bg-gray-50">
-                        <p class="text-gray-500 text-sm">Click "Generate DSL & Fetch Words" above to see results.</p>
+                    <div id="results" class="grid grid-cols-1 gap-2 h-96 overflow-y-auto p-4 border border-purple-200 rounded-lg bg-purple-50 text-purple-900 font-['Clear_Sans','Arial','Helvetica',sans-serif] uppercase">
+                        <p class="text-purple-700 text-sm">Click "Generate DSL & Fetch Words" above to see results.</p>
                     </div>
                 </div>
 
@@ -491,7 +552,7 @@
             try {
                 const apiKey = $('apiKeyInput').value.trim();
                 if (!apiKey) {
-                    $('results').innerHTML = '<p class="text-red-500 font-semibold p-2">API Key is required.</p>';
+                    $('results').innerHTML = '<p class="text-purple-900 font-semibold p-2 bg-purple-100 border border-purple-200 rounded">API Key is required.</p>';
                     return;
                 }
 
@@ -500,7 +561,7 @@
                 $('buttonText').textContent = 'Generating DSL...';
                 $('generateButton').disabled = true;
                 $('ruleInput').value = 'Generating DSL rules from prompt...';
-                $('results').innerHTML = '<p class="text-gray-500 text-sm p-2">Step 1: Translating natural language to DSL...</p>';
+                $('results').innerHTML = '<p class="text-purple-900 text-sm p-2 bg-purple-100 border border-purple-200 rounded">Step 1: Translating natural language to DSL...</p>';
 
                 const prompt = $('promptInput').value.trim();
                 if (!prompt) {
@@ -561,12 +622,12 @@ Example output:
 
                         // Fetch candidate words from bestwordlist.com
                         $('buttonText').textContent = 'Fetching Words...';
-                        $('results').innerHTML = '<p class="text-gray-500 text-sm p-2">Step 2: Fetching words from bestwordlist.com...</p>';
+                        $('results').innerHTML = '<p class="text-purple-900 text-sm p-2 bg-purple-100 border border-purple-200 rounded">Step 2: Fetching words from bestwordlist.com...</p>';
 
                         const allWords = await fetchWordListByPosition(rules);
 
                         if (allWords.length === 0) {
-                            $('results').innerHTML = '<p class="text-red-500 font-semibold p-2">No words found. At least one position constraint is required.</p>';
+                            $('results').innerHTML = '<p class="text-purple-900 font-semibold p-2 bg-purple-100 border border-purple-200 rounded">No words found. At least one position constraint is required.</p>';
                             return;
                         }
 
@@ -596,27 +657,27 @@ Example output:
                         resultsDiv.innerHTML = '';
                         sortedWords.forEach(word => {
                             const freq = getWordFrequency(word);
-                            const wordElement = document.createElement('div');
-                            wordElement.className = 'text-lg font-mono p-2 bg-white border border-green-300 rounded-lg hover:bg-green-50 cursor-pointer';
-                            wordElement.textContent = word;
-                            // Add frequency as tooltip
+                            const wordRow = createWordTiles(word.toUpperCase(), rules);
+
+                            // Add frequency tooltip
                             if (freq > 0) {
-                                wordElement.title = `Frequency: ${freq.toLocaleString()}`;
+                                wordRow.title = `Frequency: ${freq.toLocaleString()}`;
                             }
-                            resultsDiv.appendChild(wordElement);
+
+                            resultsDiv.appendChild(wordRow);
                         });
                         $('resultCount').textContent = sortedWords.length;
                     }
                 } else {
                     $('ruleInput').value = "Error: Could not generate DSL. Check console for details.";
-                    $('results').innerHTML = '<p class="text-red-500 font-semibold p-2">Error: Could not generate DSL. Check console for details.</p>';
+                    $('results').innerHTML = '<p class="text-purple-900 font-semibold p-2 bg-purple-100 border border-purple-200 rounded">Error: Could not generate DSL. Check console for details.</p>';
                     $('resultCount').textContent = 0;
                 }
 
             } catch (error) {
                 console.error("Error during word fetching:", error);
                 $('ruleInput').value = `Error: ${error.message}`;
-                $('results').innerHTML = `<p class="text-red-500 font-semibold p-2">An error occurred: ${error.message.substring(0, 80)}</p>`;
+                $('results').innerHTML = `<p class="text-purple-900 font-semibold p-2 bg-purple-100 border border-purple-200 rounded">An error occurred: ${error.message.substring(0, 80)}</p>`;
             } finally {
                 // Reset loading state
                 $('loadingIndicator').classList.add('hidden');
@@ -695,6 +756,51 @@ Example output:
 
             rules.absent = Array.from(rules.absent);
             return rules;
+        }
+
+        /**
+         * Determine the color class for a letter tile based on DSL rules
+         */
+        function getTileColor(letter, position, rules) {
+            // Check if this position has an exact match (green)
+            if (rules.exact[position] === letter) {
+                return 'green';
+            }
+
+            // Check if letter is present but constrained (yellow)
+            if (rules.present[letter]) {
+                const disallowedPositions = rules.present[letter];
+                // If the letter is at a disallowed position, it's yellow
+                if (disallowedPositions.includes(position)) {
+                    return 'yellow';
+                }
+            }
+
+            // Check if letter is in the absent list (gray)
+            if (rules.absent.includes(letter)) {
+                return 'gray';
+            }
+
+            // Default: letter is unconstrained
+            return 'default';
+        }
+
+        /**
+         * Create Wordle-style tile display for a word
+         */
+        function createWordTiles(word, rules) {
+            const container = document.createElement('div');
+            container.className = 'word-row';
+
+            for (let i = 0; i < word.length; i++) {
+                const tile = document.createElement('div');
+                const tileColor = getTileColor(word[i], i, rules);
+                tile.className = `letter-tile ${tileColor}`;
+                tile.textContent = word[i];
+                container.appendChild(tile);
+            }
+
+            return container;
         }
 
         /**
